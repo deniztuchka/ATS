@@ -1,0 +1,15 @@
+:root { --border:#ddd; }
+* { box-sizing: border-box; }
+body { font-family: system-ui, Arial, sans-serif; margin:0; color:#111; }
+.container { max-width:1100px; margin:0 auto; padding:1rem; }
+.grid { display:grid; gap:1rem; grid-template-columns:1fr 1fr; }
+@media (max-width:900px){ .grid { grid-template-columns:1fr; } }
+
+.card { border:1px solid var(--border); border-radius:.75rem; padding:1rem; background:#fff; }
+textarea { width:100%; min-height:220px; }
+.btn { padding:.7rem 1rem; border:0; border-radius:.5rem; cursor:pointer; background:#111; color:#fff; }
+.controls { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
+
+.tag { display:inline-block; border:1px solid #ccc; border-radius:1rem; padding:.2rem .6rem; margin:.15rem; }
+.small { font-size:.9rem; color:#555; }
+pre { overflow:auto; background:#fafafa; border:1px solid #eee; padding:.5rem; border-radius:.5rem; }
