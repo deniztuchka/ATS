@@ -3,4 +3,4 @@ __pycache__/
 *.pyc
 app/.env
 .idea/
-.DS_Store
+.DS_Store.env
