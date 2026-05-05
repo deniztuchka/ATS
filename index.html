@@ -616,53 +616,24 @@ function loadScript(src) {
   });
 }
 
-async function callClaude(resumeText, jobText) {
-  const prompt = `You are an expert ATS (Applicant Tracking System) and career coach.
-Analyze the match between the candidate's resume and the job description.
-
-RESUME:
-${resumeText.slice(0, 4000)}
-
-JOB DESCRIPTION:
-${jobText.slice(0, 3000)}
-
-Respond ONLY with a JSON object (no markdown, no backticks) with this exact structure:
-{
-  "score": <number 0-100>,
-  "interpretation": "<Poor|Fair|Good|Excellent>",
-  "comment": "<2-3 sentence honest evaluation of the match>",
-  "matched_skills": ["skill1", "skill2", ...],
-  "missing_keywords": ["keyword1", "keyword2", ...],
-  "matched_count": <number>,
-  "job_skill_count": <number>,
-  "resume_skill_count": <number>
-}
-
-Rules:
-- score: realistic 0-100 integer (not inflated)
-- matched_skills: skills present in BOTH documents (max 20, concise terms)
-- missing_keywords: important keywords from job NOT in resume (max 15, most impactful first)
-- comment: be honest and specific, mention key gaps or strengths`;
-
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+async function callBackend(resumeText, jobText) {
+  const res = await fetch('/api/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: prompt }]
-    })
+    body: JSON.stringify({ resume: resumeText, job_description: jobText })
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error?.message || `API error ${resp.status}`);
-  }
-
-  const data = await resp.json();
-  const raw = data.content?.map(b => b.text || '').join('') || '';
-  const clean = raw.replace(/```json|```/gi, '').trim();
-  return JSON.parse(clean);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Analysis failed');
+  return {
+    score: Math.round((data.score || 0) * 100),
+    interpretation: data.interpretation || 'Unknown',
+    comment: data.comment || '',
+    matched_skills: data.details?.common_skills || [],
+    missing_keywords: (data.missing_keywords || []).map(k => k.term || k),
+    matched_count: data.details?.common_skills?.length || 0,
+    job_skill_count: null,
+    resume_skill_count: null
+  };
 }
 
 function setStatus(el, msg, cls = '') {
@@ -768,7 +739,7 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
   setStatus(status, 'Sending to AI for analysis…', 'active');
 
   try {
-    const result = await callClaude(resume, job);
+    const result = await callBackend(resume, job);
     renderResult(result, JSON.stringify(result, null, 2));
     setStatus(status, '✓ Analysis complete.', 'ok');
   } catch (e) {
