@@ -4,9 +4,9 @@ from app.api.routes import api_bp
 from app.services.logging_conf import configure_logging
 from app.config import AppConfig
 
-BASE_DIR = os.path.dirname(__file__)              # .../thesis/app
-WEB_DIR  = os.path.join(BASE_DIR, "../web")          # .../thesis/app/web
-ASSETS_DIR = os.path.join(WEB_DIR, "assets")      # .../thesis/app/web/assets
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+WEB_DIR  = BASE_DIR
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
 def create_app():
     app = Flask(__name__, static_folder=None)
