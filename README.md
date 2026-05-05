@@ -1,5 +1,7 @@
 # AI-Powered Resume Analyzer
 
+https://deniztuchka.github.io/ATS/
+
 ### Quickstart
 ```bash
 python -m venv .venv
