@@ -1,9 +1,9 @@
-from app.nlp.preprocess import normalize_for_vectorizer   # <-- ÖNEMLİ: bu import gerekiyordu
+from app.nlp.preprocess import normalize_for_vectorizer
 from app.nlp.vectorizer import build_vectorizer
 from app.nlp.keywords import (
     top_terms_from_vectorizer,
     derive_skills,
-    compute_missing_from_sets
+    compute_missing_from_sets,
 )
 
 def interpret(score: float) -> str:
@@ -12,19 +12,26 @@ def interpret(score: float) -> str:
     if score < 0.80: return "Good"
     return "Excellent"
 
-def jaccard(a_set, b_set) -> float:
-    if not a_set and not b_set:
+def coverage_score(resume_skills, job_skills) -> float:
+    """
+    What fraction of the job's required skills appear in the resume.
+
+    This is recall-based: how much of the job description does the resume cover?
+    It does NOT penalise the candidate for having MORE skills than the job asks for.
+    This is how real ATS systems score resumes.
+
+    Example: job needs 8 skills, resume has 7 of them -> 87% Good
+    Old Jaccard: 7 / (8 + 13 extra resume skills) = 33% Poor  (wrong)
+    """
+    if not job_skills:
         return 0.0
-    union = a_set | b_set
-    inter = a_set & b_set
-    return len(inter) / max(1, len(union))
+    matched = resume_skills & job_skills
+    return len(matched) / len(job_skills)
 
 def analyze_texts(resume: str, job: str, options: dict):
-    # 1) Normalize
     resume_norm = normalize_for_vectorizer(resume)
     job_norm = normalize_for_vectorizer(job)
 
-    # 2) TF-IDF (seed terimler için; hata olursa atla)
     vectorizer = build_vectorizer()
     top_job, top_resume = [], []
     try:
@@ -34,38 +41,36 @@ def analyze_texts(resume: str, job: str, options: dict):
     except Exception:
         top_job, top_resume = [], []
 
-    # 3) Skill kümeleri (NP/NER + seed)
-    seed_job = [t for t, _ in top_job]
-    seed_resume = [t for t, _ in top_resume]
-
     job_skills = derive_skills(
         job,
         use_np=options.get("noun_phrases", True),
         use_ner=options.get("ner", True),
-        seed_terms=seed_job
+        seed_terms=[t for t, _ in top_job],
     )
     resume_skills = derive_skills(
         resume,
         use_np=options.get("noun_phrases", True),
         use_ner=options.get("ner", True),
-        seed_terms=seed_resume
+        seed_terms=[t for t, _ in top_resume],
     )
 
-    # 4) Jaccard skill overlap skoru + sadece skill-based missing
-    score = jaccard(resume_skills, job_skills)
+    score = coverage_score(resume_skills, job_skills)
+    matched = sorted(resume_skills & job_skills)
     missing = compute_missing_from_sets(job_skills, resume_skills)
 
     return {
         "score": round(float(score), 4),
         "interpretation": interpret(score),
+        "comment": "",
+        "matched_skills": matched,
         "missing_keywords": missing,
         "details": {
-            "method": "skill_overlap_jaccard",
-            "overlap_count": len(resume_skills & job_skills),
+            "method": "coverage_recall_score",
+            "overlap_count": len(matched),
             "resume_skill_count": len(resume_skills),
             "job_skill_count": len(job_skills),
-            "common_skills": sorted(list(resume_skills & job_skills))[:20],
+            "common_skills": matched,
             "top_job_terms": top_job[:12],
-            "top_resume_terms": top_resume[:12]
+            "top_resume_terms": top_resume[:12],
         }
     }
