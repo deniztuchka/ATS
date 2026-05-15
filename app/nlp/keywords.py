@@ -1,21 +1,13 @@
 """
-keywords.py — improved skill extraction using spaCy POS tags.
+keywords.py — general-purpose skill extraction using spaCy POS tags.
 
-The core fix over the original:
-  - REMOVED the raw token loop (was adding every 4+ letter word as a skill)
-  - Noun phrases: now filters by spaCy POS tags — only keeps chunks whose
-    HEAD word is NOUN or PROPN, removing verb phrases and adjective phrases
-  - NER: keeps ORG, PRODUCT, LANGUAGE entities (unchanged — already good)
-  - TF-IDF seeds: only added if they also appear as a noun/propn in the text
-  - No hardcoded tech whitelist — works for any industry
+Works for any industry: IT, fashion, medicine, cooking, marketing, etc.
 
-This means:
-  "passionate" -> POS=ADJ, dropped
-  "growing"    -> POS=VERB, dropped
-  "Python"     -> POS=PROPN, kept
-  "pattern making" -> head=NOUN, kept (fashion)
-  "patient assessment" -> head=NOUN, kept (nursing)
-  "sous vide"  -> head=NOUN, kept (cooking)
+Key improvements over original:
+  1. Removed raw token loop — was adding every 4+ letter word as a "skill"
+  2. POS tag filtering — only keeps noun chunks whose HEAD is NOUN or PROPN
+  3. Special term recovery — CI/CD, C++, DevOps etc. preserved via preprocess
+  4. No hardcoded tech whitelist — domain-neutral
 """
 
 import re
@@ -31,43 +23,67 @@ _STOPWORDS: Set[str] = {
     "of","on","or","that","the","to","with","will","we","you","our","your","this",
     "their","them","they","he","she","i","was","were","have","has","had","not",
     "but","if","so","than","then","over","under","about","up","down","out",
-    # HR boilerplate — job ad filler words
+    # HR boilerplate
     "passionate","driven","motivated","excited","dynamic","innovative","creative",
     "talented","ambitious","enthusiastic","proactive","versatile","detail",
-    "oriented","self","starter","team","player","fast","learner","quick",
-    "growing","startup","company","culture","mission","vision","values",
-    "opportunity","career","position","opening","role","join","hire","hiring",
-    "apply","send","resume","cover","letter","interview","candidate","ideal",
+    "oriented","self","starter","player","fast","learner","quick",
+    "growing","startup","culture","mission","vision","values",
+    "opportunity","career","opening","join","hire","hiring",
+    "apply","send","cover","letter","interview","candidate","ideal",
     # Benefits / compensation
     "salary","compensation","pay","bonus","equity","stock","option","benefits",
-    "benefit","vacation","pto","holiday","insurance","dental","health","vision",
-    "flexible","remote","hybrid","office","location","city","country","travel",
-    # Generic descriptors that are never skills
+    "benefit","vacation","pto","holiday","insurance","dental","flexible",
+    "remote","hybrid","location","city","country","travel",
+    # Generic descriptors
     "good","great","best","strong","solid","excellent","proficient","able",
-    "ability","capable","knowledge","understanding","familiarity","awareness",
-    "experience","experienced","background","exposure","basis","level","high",
-    "low","minimum","maximum","plus","bonus","required","preferred","nice",
-    "must","have","should","would","could","also","well","very","highly","etc",
-    # Generic nouns from job descriptions
-    "responsibility","responsibilities","requirement","requirements","skill",
-    "skills","tool","tools","technology","technologies","solution","solutions",
-    "system","systems","application","applications","platform","platforms",
-    "process","processes","project","projects","product","products","service",
-    "services","environment","team","teams","member","members","colleague",
-    "stakeholder","client","customer","user","users","business","company",
-    "organization","department","management","lead","leader","leadership",
+    "ability","capable","understanding","familiarity","awareness",
+    "background","exposure","basis","level","high","low","minimum","maximum",
+    "plus","required","preferred","nice","must","should","would","could",
+    "also","well","very","highly","etc","min","max",
+    # Generic nouns that are never skills
+    "responsibility","responsibilities","requirement","requirements",
+    "skill","skills","tool","tools","technology","technologies",
+    "solution","solutions","system","systems","application","applications",
+    "platform","platforms","process","processes","project","projects",
+    "product","products","service","services","environment","environments",
+    "team","teams","member","members","colleague","stakeholder",
+    "client","customer","user","users","business","company","organization",
+    "department","management","lead","leader","leadership",
     "communication","collaboration","coordination","presentation","reporting",
-    # Very short / meaningless
+    "experience","experienced","knowledge","role","position","company",
+    # Action verbs
     "work","works","working","making","using","need","needs","want","take",
     "give","help","support","maintain","manage","ensure","drive","build",
     "define","review","identify","create","design","test","write","run",
+    "develop","implement","integrate","automate","perform","conduct",
+    "collaborate","reside","require","fluent","willingness","residing",
+    # Location / language requirements (not skills)
+    "english","polish","french","german","spanish","dutch","italian",
+    "poland","germany","france","netherlands","sweden","norway",
+    "international","fluent","native","speaker",
+    # Numbers / time
+    "year","years","month","months","day","days","hour","hours",
 }
 
-# POS tags that indicate genuine content words (skills, tools, concepts)
+# POS tags for genuine skill head words
 _SKILL_POS = {"NOUN", "PROPN"}
 
-# POS tags to reject even if they sneak into a noun chunk
-_NOISE_POS = {"ADJ", "ADV", "VERB", "AUX", "DET", "PART", "PUNCT", "NUM"}
+# POS tags that indicate noise
+_NOISE_POS = {"ADJ", "ADV", "VERB", "AUX", "DET", "PART", "PUNCT"}
+
+# Canonical display names for normalised special terms
+_DISPLAY_NAMES = {
+    "cicd":       "CI/CD",
+    "cpp":        "C++",
+    "csharp":     "C#",
+    "dotnet":     ".NET",
+    "aspnet":     "ASP.NET",
+    "nodejs":     "Node.js",
+    "nextjs":     "Next.js",
+    "vuejs":      "Vue.js",
+    "reactjs":    "React.js",
+    "scikitlearn":"scikit-learn",
+}
 
 _token_re = re.compile(r"[a-z0-9][a-z0-9\+\-#\.\/]*")
 
@@ -83,6 +99,11 @@ def _normalize_term(t: str) -> str:
     return t
 
 
+def _display_term(t: str) -> str:
+    """Return the human-readable form of a normalised term."""
+    return _DISPLAY_NAMES.get(t, t)
+
+
 def _term_tokens(t: str) -> List[str]:
     return _token_re.findall(t.lower())
 
@@ -92,7 +113,6 @@ def _is_stopword(tok: str) -> bool:
 
 
 def _is_valid_term(term: str) -> bool:
-    """Structural check — reject empty, too long, or stopword-only terms."""
     norm = _normalize_term(term)
     toks = _term_tokens(norm)
     if not toks or len(toks) > 4:
@@ -108,28 +128,22 @@ def _is_valid_term(term: str) -> bool:
 
 def _chunk_is_skill(chunk) -> bool:
     """
-    Return True if a spaCy noun chunk looks like a real skill/tool/concept.
+    Return True if a spaCy noun chunk represents a real skill or tool.
 
-    Criteria:
-      1. The HEAD token of the chunk must be NOUN or PROPN
-         (rejects verb phrases like "growing team", adj phrases like "strong communication")
-      2. The chunk text must pass the structural stopword check
-      3. The chunk must not be dominated by noise POS tags
+    Rules:
+      1. HEAD token must be NOUN or PROPN
+         (drops "passionate engineer", "growing team", "strong communication")
+      2. Must pass structural stopword check
+      3. Must not be dominated by noise POS tokens
     """
-    # Criterion 1: head must be a content word POS
     if chunk.root.pos_ not in _SKILL_POS:
         return False
-
-    # Criterion 2: structural check
     if not _is_valid_term(chunk.text):
         return False
-
-    # Criterion 3: reject if more than half the tokens are noise POS
     tokens = list(chunk)
-    noise_count = sum(1 for t in tokens if t.pos_ in _NOISE_POS and not t.is_stop)
-    if noise_count > len(tokens) / 2:
+    noise = sum(1 for t in tokens if t.pos_ in _NOISE_POS and not t.is_stop)
+    if noise > len(tokens) / 2:
         return False
-
     return True
 
 
@@ -139,50 +153,42 @@ def _chunk_is_skill(chunk) -> bool:
 
 def extract_noun_phrases(text: str) -> List[str]:
     """
-    Extract noun phrases using spaCy, filtered by POS tags.
-    Works for any language domain — IT, fashion, medicine, cooking, etc.
+    Extract noun phrases filtered by POS head tag.
+    Works for any industry domain.
     """
     doc = doc_from_text(text)
     out: Set[str] = set()
-
     for chunk in doc.noun_chunks:
         if _chunk_is_skill(chunk):
             term = _normalize_term(chunk.text)
             if _is_valid_term(term):
-                out.add(term)
-
+                out.add(_display_term(term))
     return list(out)
 
 
 def extract_named_entities(text: str) -> List[str]:
     """
     Extract named entities: ORG, PRODUCT, LANGUAGE.
-    These tend to be tools, software, technologies, certifications.
+    Catches tools, frameworks, software names.
     """
     doc = doc_from_text(text)
     whitelist_labels = {"ORG", "PRODUCT", "LANGUAGE"}
     out: Set[str] = set()
-
     for ent in doc.ents:
         if ent.label_ in whitelist_labels or ent.text.isupper():
             term = _normalize_term(ent.text)
             if _is_valid_term(term):
-                out.add(term)
-
+                out.add(_display_term(term))
     return list(out)
 
 
 def top_terms_from_vectorizer(
     vectorizer, tfidf_matrix, doc_index: int, top_k: int = 30
 ) -> List[Tuple[str, float]]:
-    """
-    Return top TF-IDF weighted terms, filtered to those that are
-    structurally valid skill terms (no stopword-only terms).
-    """
     feature_names = vectorizer.get_feature_names_out()
     row = tfidf_matrix[doc_index].toarray().ravel()
     pairs = [
-        (feature_names[i], float(row[i]))
+        (_display_term(feature_names[i]), float(row[i]))
         for i in range(len(feature_names))
         if row[i] > 0 and _is_valid_term(feature_names[i])
     ]
@@ -199,32 +205,29 @@ def derive_skills(
     """
     Build a skill set from a document.
 
-    Sources (in order of reliability):
-      1. NER — named entities (ORG, PRODUCT, LANGUAGE) — highest precision
-      2. Noun phrases filtered by POS head tag — catches domain skills
-      3. TF-IDF seeds — high-weight terms already validated structurally
+    Sources:
+      1. NER  — named entities (ORG, PRODUCT, LANGUAGE)
+      2. Noun phrases filtered by POS head
+      3. TF-IDF seeds (structurally validated)
 
-    NOTE: The old raw token loop has been removed. It was the main source
-    of noise (adding every 4+ letter word regardless of grammatical role).
+    The raw token loop from the original has been removed — it was
+    adding every 4+ letter word regardless of grammatical role.
     """
     skills: Set[str] = set()
 
-    # 1. Named entities
     if use_ner:
         for t in extract_named_entities(text):
             skills.add(t)
 
-    # 2. POS-filtered noun phrases
     if use_np:
         for t in extract_noun_phrases(text):
             skills.add(t)
 
-    # 3. TF-IDF seeds (structurally validated upstream, no raw token loop)
     if seed_terms:
         for t in seed_terms:
             norm = _normalize_term(t)
             if _is_valid_term(norm):
-                skills.add(norm)
+                skills.add(_display_term(norm))
 
     return skills
 
