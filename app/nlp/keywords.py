@@ -111,17 +111,20 @@ def _chunk_is_skill(chunk) -> bool:
     Return True if a spaCy noun chunk looks like a real skill/tool/concept.
 
     Criteria:
-      1. The HEAD token must be NOUN or PROPN
-         (rejects "growing team", "strong communication", "passionate engineer")
+      1. The HEAD token of the chunk must be NOUN or PROPN
+         (rejects verb phrases like "growing team", adj phrases like "strong communication")
       2. The chunk text must pass the structural stopword check
       3. The chunk must not be dominated by noise POS tags
     """
+    # Criterion 1: head must be a content word POS
     if chunk.root.pos_ not in _SKILL_POS:
         return False
 
+    # Criterion 2: structural check
     if not _is_valid_term(chunk.text):
         return False
 
+    # Criterion 3: reject if more than half the tokens are noise POS
     tokens = list(chunk)
     noise_count = sum(1 for t in tokens if t.pos_ in _NOISE_POS and not t.is_stop)
     if noise_count > len(tokens) / 2:
@@ -137,7 +140,7 @@ def _chunk_is_skill(chunk) -> bool:
 def extract_noun_phrases(text: str) -> List[str]:
     """
     Extract noun phrases using spaCy, filtered by POS tags.
-    Works for any domain — IT, fashion, medicine, cooking, marketing, etc.
+    Works for any language domain — IT, fashion, medicine, cooking, etc.
     """
     doc = doc_from_text(text)
     out: Set[str] = set()
@@ -172,6 +175,10 @@ def extract_named_entities(text: str) -> List[str]:
 def top_terms_from_vectorizer(
     vectorizer, tfidf_matrix, doc_index: int, top_k: int = 30
 ) -> List[Tuple[str, float]]:
+    """
+    Return top TF-IDF weighted terms, filtered to those that are
+    structurally valid skill terms (no stopword-only terms).
+    """
     feature_names = vectorizer.get_feature_names_out()
     row = tfidf_matrix[doc_index].toarray().ravel()
     pairs = [
@@ -192,21 +199,27 @@ def derive_skills(
     """
     Build a skill set from a document.
 
-    Sources:
-      1. NER — named entities (ORG, PRODUCT, LANGUAGE)
-      2. Noun phrases filtered by POS head tag
-      3. TF-IDF seeds — structurally validated
+    Sources (in order of reliability):
+      1. NER — named entities (ORG, PRODUCT, LANGUAGE) — highest precision
+      2. Noun phrases filtered by POS head tag — catches domain skills
+      3. TF-IDF seeds — high-weight terms already validated structurally
+
+    NOTE: The old raw token loop has been removed. It was the main source
+    of noise (adding every 4+ letter word regardless of grammatical role).
     """
     skills: Set[str] = set()
 
+    # 1. Named entities
     if use_ner:
         for t in extract_named_entities(text):
             skills.add(t)
 
+    # 2. POS-filtered noun phrases
     if use_np:
         for t in extract_noun_phrases(text):
             skills.add(t)
 
+    # 3. TF-IDF seeds (structurally validated upstream, no raw token loop)
     if seed_terms:
         for t in seed_terms:
             norm = _normalize_term(t)
