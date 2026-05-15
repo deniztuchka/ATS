@@ -14,14 +14,9 @@ def interpret(score: float) -> str:
 
 def coverage_score(resume_skills, job_skills) -> float:
     """
-    What fraction of the job's required skills appear in the resume.
-
-    This is recall-based: how much of the job description does the resume cover?
-    It does NOT penalise the candidate for having MORE skills than the job asks for.
-    This is how real ATS systems score resumes.
-
-    Example: job needs 8 skills, resume has 7 of them -> 87% Good
-    Old Jaccard: 7 / (8 + 13 extra resume skills) = 33% Poor  (wrong)
+    Recall-based: what fraction of the job's skills appear in the resume.
+    Does NOT penalise the candidate for having more skills than the job asks for.
+    Real ATS systems score this way.
     """
     if not job_skills:
         return 0.0
@@ -41,19 +36,24 @@ def analyze_texts(resume: str, job: str, options: dict):
     except Exception:
         top_job, top_resume = [], []
 
+    # Deduplicate seed terms (unigrams only after vectorizer fix)
+    seed_job = list(dict.fromkeys(t for t, _ in top_job))
+    seed_resume = list(dict.fromkeys(t for t, _ in top_resume))
+
     job_skills = derive_skills(
         job,
         use_np=options.get("noun_phrases", True),
         use_ner=options.get("ner", True),
-        seed_terms=[t for t, _ in top_job],
+        seed_terms=seed_job,
     )
     resume_skills = derive_skills(
         resume,
         use_np=options.get("noun_phrases", True),
         use_ner=options.get("ner", True),
-        seed_terms=[t for t, _ in top_resume],
+        seed_terms=seed_resume,
     )
 
+    # Both are sets — exact duplicates already removed automatically
     score = coverage_score(resume_skills, job_skills)
     matched = sorted(resume_skills & job_skills)
     missing = compute_missing_from_sets(job_skills, resume_skills)
